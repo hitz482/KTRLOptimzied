@@ -1,133 +1,272 @@
 <!DOCTYPE html>
 <html lang="en-us">
-  <head>
-    <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Unity Web Player | KTRLGuys</title>
-    <link rel="shortcut icon" href="TemplateData/favicon.ico">
-    <link rel="stylesheet" href="TemplateData/style.css">
-  </head>
-  <body>
-    <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
-      <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
-        <div id="unity-progress-bar-empty">
-          <div id="unity-progress-bar-full"></div>
-        </div>
-      </div>
-      <div id="unity-warning"> </div>
-      <div id="unity-footer">
-        <div id="unity-logo-title-footer"></div>
-        <div id="unity-fullscreen-button"></div>
-        <div id="unity-build-title">KTRLGuys</div>
-      </div>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>KTRLGuys</title>
+
+  <!-- user-scalable=no because this is a game, not a document: pinch-zoom on a canvas only ever
+       breaks aim. viewport-fit=cover so the art reaches into the notch area instead of letterboxing. -->
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0d1b3e">
+
+  <!-- Declared before the stylesheet so the browser starts fetching the splash on the first bytes of
+       the document, rather than waiting to discover it as a CSS background. It is the first paint. -->
+  <link rel="preload" as="image" href="splash.jpg">
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0d1b3e;
+      /* Stop the browser claiming drags and long-press as scroll / text selection gestures. */
+      overscroll-behavior: none;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    }
+
+    /* FULL PAGE, not a centred box. The stock template hard-codes 960x600 onto
+       canvas.style and centres it, which is what produced the small window floating in grey. Here CSS
+       owns the display size and JS below keeps the render target in step with it. */
+    #unity-container {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #unity-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #0d1b3e;
+      touch-action: none;
+    }
+
+    /* ---- loading cover -------------------------------------------------------------------- */
+    /* Sits over the canvas for the whole load, so Unity's own logo/progress bar and the blank-canvas
+       flash are never seen — the splash art IS the loading screen. */
+    #loading-cover {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+
+      /* JPEG, not the source PNG: the art is a painted 1672x941 render, so PNG bought nothing and
+         cost 1.9 MB — 258 KB here, and this image has to paint BEFORE anything else on the page. */
+      background-image: url('splash.jpg');
+      background-size: cover;      /* fill at any aspect ratio; crop rather than letterbox */
+      background-position: center;
+      background-repeat: no-repeat;
+      background-color: #2b8ef0;   /* the art's sky blue, shown for the instant before it decodes */
+
+      transition: opacity 0.45s ease-out;
+    }
+
+    #loading-cover.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #loading-panel {
+      width: min(62vw, 640px);
+      margin-bottom: 11vh;
+      text-align: center;
+    }
+
+    #loading-text {
+      color: #ffffff;
+      font-size: clamp(17px, 2.3vw, 32px);
+      font-weight: 800;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+      /* Dark outline so the label survives whatever part of the art ends up behind it. */
+      text-shadow: 0 3px 0 rgba(0, 0, 0, 0.45), 0 0 14px rgba(0, 0, 0, 0.4);
+    }
+
+    #progress-track {
+      height: clamp(16px, 2.1vh, 26px);
+      border-radius: 999px;
+      background: rgba(8, 16, 38, 0.75);
+      border: 3px solid rgba(255, 255, 255, 0.92);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+    }
+
+    #progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #7fd8ff 0%, #2b8ef0 100%);
+      transition: width 0.2s ease-out;
+    }
+
+    /* ---- fullscreen button ----------------------------------------------------------------- */
+    #fullscreen-button {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      z-index: 20;
+      width: 46px;
+      height: 46px;
+      padding: 0;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      background: #5b4bff;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.12s ease-out, background 0.12s ease-out;
+    }
+
+    #fullscreen-button:hover  { background: #6d5eff; transform: scale(1.06); }
+    #fullscreen-button:active { transform: scale(0.96); }
+    #fullscreen-button svg    { width: 22px; height: 22px; fill: #ffffff; }
+
+    /* ---- warning / error banner ------------------------------------------------------------ */
+    /* A build that fails silently is the worst outcome: the player stares at the splash forever. */
+    #unity-warning {
+      position: absolute;
+      left: 50%;
+      top: 24px;
+      transform: translateX(-50%);
+      z-index: 30;
+      display: none;
+      max-width: 84vw;
+      color: #ffffff;
+      font-size: 14px;
+      line-height: 1.45;
+      text-align: center;
+    }
+
+    #unity-warning > div {
+      margin-bottom: 6px;
+      padding: 12px 18px;
+      border-radius: 10px;
+      background: rgba(10, 14, 30, 0.94);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="unity-container">
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+  </div>
+
+  <div id="loading-cover">
+    <div id="loading-panel">
+      <div id="loading-text">Loading 0%</div>
+      <div id="progress-track"><div id="progress-fill"></div></div>
     </div>
-    <script>
-      var canvas = document.querySelector("#unity-canvas");
+  </div>
 
-      // Shows a temporary message banner/ribbon for a few seconds, or
-      // a permanent error message on top of the canvas if type=='error'.
-      // If type=='warning', a yellow highlight color is used.
-      // Modify or remove this function to customize the visually presented
-      // way that non-critical warnings and error messages are presented to the
-      // user.
-      function unityShowBanner(msg, type) {
-        var warningBanner = document.querySelector("#unity-warning");
-        function updateBannerVisibility() {
-          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
-        }
-        var div = document.createElement('div');
-        div.innerHTML = msg;
-        warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
-        }
-        updateBannerVisibility();
+  <button id="fullscreen-button" title="Fullscreen" aria-label="Fullscreen">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9V4h5v2H6v3H4zm0 6h2v3h3v2H4v-5zm16 0v5h-5v-2h3v-3h2zM20 9h-2V6h-3V4h5v5z"/>
+    </svg>
+  </button>
+
+  <div id="unity-warning"></div>
+
+  <script>
+    var canvas = document.querySelector("#unity-canvas");
+    var cover = document.querySelector("#loading-cover");
+    var loadingText = document.querySelector("#loading-text");
+    var progressFill = document.querySelector("#progress-fill");
+    var warningBanner = document.querySelector("#unity-warning");
+
+    // Unity calls this for non-fatal warnings and for fatal errors. Errors stay up; warnings expire,
+    // so a transient audio-context or WebGL-extension notice doesn't sit on screen for the match.
+    function unityShowBanner(msg, type) {
+      function updateVisibility() {
+        warningBanner.style.display = warningBanner.children.length ? "block" : "none";
       }
-
-      var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/KTRLGuysWebBuild.loader.js";
-      var config = {
-        arguments: [],
-        dataUrl: buildUrl + "/KTRLGuysWebBuild.data.unityweb",
-        frameworkUrl: buildUrl + "/KTRLGuysWebBuild.framework.js.unityweb",
-        codeUrl: buildUrl + "/KTRLGuysWebBuild.wasm.unityweb",
-        streamingAssetsUrl: "StreamingAssets",
-        companyName: "DefaultCompany",
-        productName: "KTRLGuys",
-        productVersion: "0.1.0",
-        showBanner: unityShowBanner,
-        // errorHandler: function(err, url, line) {
-        //    alert("error " + err + " occurred at line " + line);
-        //    // Return 'true' if you handled this error and don't want Unity
-        //    // to process it further, 'false' otherwise.
-        //    return true;
-        // },
-      };
-
-      // By default, Unity keeps WebGL canvas render target size matched with
-      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
-      // Set this to false if you want to decouple this synchronization from
-      // happening inside the engine, and you would instead like to size up
-      // the canvas DOM size and WebGL render target sizes yourself.
-      // config.matchWebGLToCanvasSize = false;
-
-      // If you would like all file writes inside Unity Application.persistentDataPath
-      // directory to automatically persist so that the contents are remembered when
-      // the user revisits the site the next time, uncomment the following line:
-      // config.autoSyncPersistentDataPath = true;
-      // This autosyncing is currently not the default behavior to avoid regressing
-      // existing user projects that might rely on the earlier manual
-      // JS_FileSystem_Sync() behavior, but in future Unity version, this will be
-      // expected to change.
-
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        // Mobile device style: fill the whole browser client area with the game canvas:
-
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        document.querySelector("#unity-container").className = "unity-mobile";
-        canvas.className = "unity-mobile";
-
-        // To lower canvas resolution on mobile devices to gain some
-        // performance, uncomment the following line:
-        // config.devicePixelRatio = 1;
-
-
-      } else {
-        // Desktop style: Render the game canvas in a window that can be maximized to fullscreen:
-        canvas.style.width = "960px";
-        canvas.style.height = "600px";
+      var div = document.createElement("div");
+      div.innerHTML = msg;
+      if (type == "error") div.style.color = "#ffd0d0";
+      else if (type == "warning") div.style.color = "#ffe9a8";
+      warningBanner.appendChild(div);
+      if (type != "error") {
+        setTimeout(function () {
+          warningBanner.removeChild(div);
+          updateVisibility();
+        }, 5000);
       }
+      updateVisibility();
+    }
 
-      document.querySelector("#unity-loading-bar").style.display = "block";
+    var buildUrl = "Build";
+    var loaderUrl = buildUrl + "/KTRLGuysWebBuild.loader.js";
+    var config = {
+      arguments: [],
+      dataUrl: buildUrl + "/KTRLGuysWebBuild.data.unityweb",
+      frameworkUrl: buildUrl + "/KTRLGuysWebBuild.framework.js.unityweb",
+      codeUrl: buildUrl + "/KTRLGuysWebBuild.wasm.unityweb",
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "DefaultCompany",
+      productName: "KTRLGuys",
+      productVersion: "0.1.0",
+      showBanner: unityShowBanner,
+    };
 
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
-              }).then((unityInstance) => {
-                document.querySelector("#unity-loading-bar").style.display = "none";
-                document.querySelector("#unity-fullscreen-button").onclick = () => {
-                  unityInstance.SetFullscreen(1);
-                };
+    // Cap the render target at 2x density. Unity otherwise matches the canvas render target to
+    // devicePixelRatio, and a 3x framebuffer for a 32-racer scene is a straightforward way to halve
+    // the frame rate on a phone. Display size stays full-page either way — this is resolution only.
+    config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
-              }).catch((message) => {
-                alert(message);
-              });
-            };
+    var unityInstance = null;
 
-      document.body.appendChild(script);
+    document.querySelector("#fullscreen-button").addEventListener("click", function () {
+      // Unity's own SetFullscreen is preferred once the instance exists: it keeps the canvas size and
+      // input mapping in step. Before that, fall back to the DOM API so the button is never dead.
+      if (unityInstance) {
+        unityInstance.SetFullscreen(1);
+      } else if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen();
+      }
+    });
 
-    </script>
-  </body>
+    var script = document.createElement("script");
+    script.src = loaderUrl;
+    script.onload = function () {
+      createUnityInstance(canvas, config, function (progress) {
+        var pct = Math.round(progress * 100);
+        loadingText.textContent = "Loading " + pct + "%";
+        progressFill.style.width = pct + "%";
+      }).then(function (instance) {
+        unityInstance = instance;
+
+        // Hold at 100% for a beat before fading. The last stretch of progress lands in one burst, so
+        // cutting the instant it resolves reads as a flash rather than as finishing.
+        loadingText.textContent = "Loading 100%";
+        progressFill.style.width = "100%";
+        setTimeout(function () {
+          cover.classList.add("hidden");
+          // Taken out of the layer stack once faded, so it can never swallow a click.
+          setTimeout(function () { cover.style.display = "none"; }, 500);
+        }, 250);
+      }).catch(function (message) {
+        unityShowBanner(message, "error");
+      });
+    };
+    script.onerror = function () {
+      unityShowBanner("Failed to load the game files. Check that the Build folder is served next to this page.", "error");
+    };
+    document.body.appendChild(script);
+  </script>
+</body>
 </html>
